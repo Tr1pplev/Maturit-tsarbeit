@@ -1,0 +1,94 @@
+// side_macropad.ino
+#include <Wire.h>
+
+#define I2C_ADDR 0x14
+
+// 1x4 matrix wiring
+const uint8_t ROW_PINS[4] = {23, 24, 25, 33}; // Row1..Row4 (Taste1..Taste4)
+const uint8_t COL_PIN = 12;                   // common column (input_pullup)
+
+// Encoder (same pins as main per request)
+#define ENC_CLK 35
+#define ENC_DT  34
+#define ENC_SW  32
+
+volatile uint8_t pendingEncEvent = 0; // 0 none, 1 zoom in, 2 zoom out, 3 alt+f4
+volatile uint8_t activeLayer = 4;
+
+void onRequest(){
+ Wire.write((uint8_t)activeLayer);
+ Wire.write((uint8_t)pendingEncEvent);
+ Wire.write((uint8_t)0);
+ pendingEncEvent = 0;
+}
+
+void setup(){
+ Serial.begin(115200);
+ Wire.begin(I2C_ADDR);
+ Wire.onRequest(onRequest);
+
+ // rows as outputs default HIGH (no press)
+ for (int i=0;i<4;i++){
+   pinMode(ROW_PINS[i], OUTPUT);
+   digitalWrite(ROW_PINS[i], HIGH);
+ }
+ pinMode(COL_PIN, INPUT_PULLUP);
+
+ // encoder pins: input (input-only pins need external pullups!)
+ pinMode(ENC_CLK, INPUT);
+ pinMode(ENC_DT, INPUT);
+ pinMode(ENC_SW, INPUT);
+
+ Serial.println("SIDE ready");
+}
+
+void loop(){
+ // scan 1x4: drive each row LOW and check column
+ for (uint8_t i=0;i<4;i++){
+   digitalWrite(ROW_PINS[i], LOW);
+   delayMicroseconds(200); // small settle
+   if (digitalRead(COL_PIN) == LOW){
+     activeLayer = i + 1; // button i corresponds to layer i+1
+     Serial.print("BTN->LAYER ");
+     Serial.println(activeLayer);
+     // wait until release
+     while (digitalRead(COL_PIN) == LOW) delay(10);
+     delay(80); // basic debounce
+   }
+   digitalWrite(ROW_PINS[i], HIGH);
+ }
+
+ // encoder rotation detection (robust)
+ static int lastClk = HIGH;
+ int clk = digitalRead(ENC_CLK);
+ if (clk != lastClk && clk == LOW){
+   int dt = digitalRead(ENC_DT);
+   // small debounce via timestamp
+   static unsigned long lastEncTime = 0;
+   unsigned long now = millis();
+   if (now - lastEncTime > 4){
+     if (dt != clk){
+       pendingEncEvent = 1; // zoom in
+       Serial.println("ENC SIDE: ZOOM_IN (pending)");
+     } else {
+       pendingEncEvent = 2; // zoom out
+       Serial.println("ENC SIDE: ZOOM_OUT (pending)");
+     }
+     lastEncTime = now;
+   }
+ }
+ lastClk = clk;
+
+ // encoder button (on release)
+ static bool btnDown = false;
+ bool sw = (digitalRead(ENC_SW) == LOW);
+ if (sw && !btnDown) btnDown = true;
+ if (!sw && btnDown){
+   btnDown = false;
+   pendingEncEvent = 3; // ALT+F4
+   Serial.println("ENC SIDE: BTN -> ALT+F4 (pending)");
+   delay(80);
+ }
+
+ delay(8);
+}
