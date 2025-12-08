@@ -1,0 +1,141 @@
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
+
+// === MAIN MATRIX (3x3) ===
+const int rowPins[3] = {27, 26, 25};
+const int colPins[3] = {33, 32, 23};
+
+// === ENCODER MAIN ===
+const int encA = 34;     // CLK
+const int encB = 35;     // DT
+const int encSW = 32;    // KNOPF
+
+volatile int lastStateA;
+volatile int lastStateB;
+
+int encoderValue = 0;
+bool buttonPressed = false;
+
+// === I2C ===
+#define SLAVE_ADDR 0x12
+
+// === LAYER ===
+int layer = 1;
+
+void IRAM_ATTR readEncoder() {
+   int A = digitalRead(encA);
+   int B = digitalRead(encB);
+
+   // INVERTED ROTATION HERE:
+   if (A != lastStateA) {
+       if (B != A) {
+           encoderValue++;      // früher herunter, jetzt rauf
+       } else {
+           encoderValue--;      // früher rauf, jetzt herunter
+       }
+   }
+
+   lastStateA = A;
+   lastStateB = B;
+}
+
+void setup() {
+   Serial.begin(115200);
+
+   // === ENCODER SETUP ===
+   pinMode(encA, INPUT_PULLUP);
+   pinMode(encB, INPUT_PULLUP);
+   pinMode(encSW, INPUT_PULLUP);
+
+   lastStateA = digitalRead(encA);
+   lastStateB = digitalRead(encB);
+   attachInterrupt(digitalPinToInterrupt(encA), readEncoder, CHANGE);
+
+   // === MATRIX ===
+   for (int i = 0; i < 3; i++) {
+       pinMode(rowPins[i], OUTPUT);
+       digitalWrite(rowPins[i], HIGH);
+       pinMode(colPins[i], INPUT_PULLUP);
+   }
+
+   // === DISPLAY ===
+   display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
+   display.clearDisplay();
+   display.setTextSize(1);
+   display.setTextColor(WHITE);
+   display.display();
+
+   // === I2C ===
+   Wire.begin();
+}
+
+// === MATRIX FUNCTION ===
+String readMatrix() {
+   for (int r = 0; r < 3; r++) {
+       digitalWrite(rowPins[r], LOW);
+       for (int c = 0; c < 3; c++) {
+           if (digitalRead(colPins[c]) == LOW) {
+               digitalWrite(rowPins[r], HIGH);
+               return "R" + String(r) + "C" + String(c);
+           }
+       }
+       digitalWrite(rowPins[r], HIGH);
+   }
+   return "";
+}
+
+void loop() {
+
+   // === BUTTON ===
+   if (!digitalRead(encSW)) {
+       if (!buttonPressed) {
+           buttonPressed = true;
+           Serial.println("BTN");
+       }
+   } else {
+       buttonPressed = false;
+   }
+
+   // === ENCODER ===
+   if (encoderValue != 0) {
+       Serial.print("ENC:");
+       Serial.println(encoderValue);
+       encoderValue = 0;
+   }
+
+   // === MATRIX ===
+   String key = readMatrix();
+   if (key != "") {
+       Serial.println("KEY:" + key + ":" + String(layer));
+   }
+
+   // === I2C SLAVE READ ===
+   Wire.requestFrom(SLAVE_ADDR, 3);
+   if (Wire.available()) {
+       char a = Wire.read();
+       char b = Wire.read();
+       char c = Wire.read();
+
+       if (a == 'E') { 
+           Serial.print("S_ENC:");
+           Serial.println((int)b);
+       }
+       if (a == 'B') {
+           Serial.println("S_BTN");
+       }
+   }
+
+   // === DISPLAY LAYER ===
+   display.clearDisplay();
+   display.setCursor(0, 0);
+   display.print("Layer: ");
+   display.println(layer);
+   display.display();
+
+   delay(10);
+}
