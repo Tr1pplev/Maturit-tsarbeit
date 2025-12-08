@@ -1,0 +1,143 @@
+# macropad_windows.py
+import serial, time, pyperclip, ctypes, keyboard
+from win10toast import ToastNotifier
+
+SERIAL_PORT = "COM3"   # <<< set your COM port
+BAUD = 115200
+
+toaster = ToastNotifier()
+user32 = ctypes.WinDLL('user32', use_last_error=True)
+KEYEVENTF_EXTENDEDKEY = 0x0001
+KEYEVENTF_KEYUP = 0x0002
+VK_VOLUME_UP = 0xAF
+VK_VOLUME_DOWN = 0xAE
+VK_MEDIA_PP = 0xB3
+VK_VOLUME_MUTE = 0xAD
+
+def send_vk(vk):
+   user32.keybd_event(vk,0,KEYEVENTF_EXTENDEDKEY,0)
+   time.sleep(0.02)
+   user32.keybd_event(vk,0,KEYEVENTF_EXTENDEDKEY|KEYEVENTF_KEYUP,0)
+
+def volume_up(): send_vk(VK_VOLUME_UP)
+def volume_down(): send_vk(VK_VOLUME_DOWN)
+def media_playpause(): send_vk(VK_MEDIA_PP)
+def volume_mute(): send_vk(VK_VOLUME_MUTE)
+
+def type_text(s): keyboard.write(s)
+def paste_clip(s):
+   old = pyperclip.paste()
+   pyperclip.copy(s)
+   keyboard.press_and_release('ctrl+v')
+   time.sleep(0.05)
+   pyperclip.copy(old)
+
+last_layer = 4
+
+def action_layer_key(layer, key):
+   # key indices 0..8 row-major
+   # Layer 1: Gaming
+   if layer == 1:
+       if key == 0: volume_down()
+       elif key == 1: media_playpause()
+       elif key == 2: volume_up()
+       elif key == 3: volume_mute()
+       elif key == 4: keyboard.press_and_release('up')
+       elif key == 5: keyboard.press_and_release('f3')
+       elif key == 6: keyboard.press_and_release('left')
+       elif key == 7: keyboard.press_and_release('down')
+       elif key == 8: keyboard.press_and_release('right')
+       return
+
+   # Layer 2: F-Keys
+   if layer == 2:
+       mapf = {0:'f1',1:'f2',2:'f3',3:'f4',4:'f5',5:'f6',6:'f7',7:'f8',8:'f9'}
+       if key in mapf: keyboard.press_and_release(mapf[key])
+       return
+
+   # Layer 3: Symbols
+   if layer == 3:
+       if key == 0: keyboard.press_and_release('f10')
+       elif key == 1: keyboard.press_and_release('f11')
+       elif key == 2: keyboard.press_and_release('f12')
+       elif key == 3: type_text('|')
+       elif key == 4: type_text('\\')
+       elif key == 5: type_text('@')
+       elif key == 6: type_text('{}')
+       elif key == 7: type_text('[]')
+       elif key == 8: type_text('#')
+       return
+
+   # Layer 4: YouTube
+   if layer == 4:
+       if key == 0: keyboard.press_and_release('ctrl+t')
+       elif key == 1: keyboard.press_and_release('ctrl+w')
+       elif key == 2: keyboard.press_and_release('alt+f4')
+       elif key == 3: volume_down()
+       elif key == 4: media_playpause()
+       elif key == 5: volume_up()
+       elif key == 6: keyboard.press_and_release('left')
+       elif key == 7:
+           paste_clip('https://www.youtube.com/watch?v=')
+           time.sleep(0.05)
+           keyboard.press_and_release('enter')
+       elif key == 8: keyboard.press_and_release('right')
+       return
+
+def handle_line(line):
+   global last_layer
+   line = line.strip()
+   if not line: return
+   print("RX:", line)
+   if line.startswith("LAYER_SET"):
+       try:
+           _, val = line.split(",",1)
+           val = int(val)
+           if val != last_layer:
+               toaster.show_toast("MacroPad","Layer "+str(val), duration=1, threaded=True)
+               last_layer = val
+       except: pass
+       return
+   if line.startswith("KEY,"):
+       try:
+           _, ls, ks = line.split(",",2)
+           action_layer_key(int(ls), int(ks))
+       except Exception as e:
+           print("KEY parse error:", e)
+       return
+   if line == "VOL_UP":
+       volume_up()
+   elif line == "VOL_DOWN":
+       volume_down()
+   elif line == "ZOOM_IN":
+       keyboard.press_and_release('ctrl+plus')
+   elif line == "ZOOM_OUT":
+       keyboard.press_and_release('ctrl+-')
+   elif line == "ALT_F4":
+       keyboard.press_and_release('alt+f4')
+
+def main():
+   try:
+       ser = serial.Serial(SERIAL_PORT, BAUD, timeout=1)
+   except Exception as e:
+       print("Cannot open serial:", e)
+       return
+   print("MacroPad listener started on", SERIAL_PORT)
+   buf = ""
+   while True:
+       try:
+           data = ser.read(ser.in_waiting or 1).decode(errors='ignore')
+           if data:
+               buf += data
+               while '\n' in buf:
+                   line, buf = buf.split('\n',1)
+                   handle_line(line)
+           time.sleep(0.01)
+       except KeyboardInterrupt:
+           break
+       except Exception as e:
+           print("Serial error:", e)
+           time.sleep(0.2)
+
+if __name__ == "__main__":
+   main()
