@@ -1,0 +1,2 @@
+Set WshShell = CreateObject("Wscript.Shell")
+WshShell.Run "pythonw.exe ""C:\Users\Lorenzo\OneDrive\Dokumente\macropad_windows.py"
